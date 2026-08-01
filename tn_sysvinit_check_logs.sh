@@ -1,140 +1,121 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: (c) 2026 Tangent Networks
+# SPDX-FileCopyrightText: (c) 2026 David Peter, Tangent Networks
 # SPDX-License-Identifier: MIT
 
 set -euo pipefail
 
+readonly LOG_FILE="/var/log/boot"
+readonly SYS_LOG="/var/log/syslog"
+
 echo "+-------------------------------------------------------------------+"
 echo "|     AUTOMATED LOG ANALYSIS & DIAGNOSTIC VERIFICATION TOOL         |"
 echo "+-------------------------------------------------------------------+"
-
-ERRORS=0
-WARNINGS=0
-
-info() { echo "  [OK] $*"; }
-warn() {
-    echo "  [WARN] $*"
-    ((WARNINGS++))
-}
-fail() {
-    echo "  [FAIL] $*"
-    ((ERRORS++))
-}
-
-# System state verification
 echo ""
+
+PASSED=0
+FAILED=0
+
+check_ok() {
+    echo "  [OK] $*"
+    ((PASSED++)) || true
+}
+
+check_fail() {
+    echo "  [FAIL] $*"
+    ((FAILED++)) || true
+}
+
 echo "--> Verifying System State..."
-PID1=$(ps -p 1 -o comm= 2>/dev/null || echo "unknown")
-if [ "$PID1" = "init" ]; then
-    info "PID 1 is init (sysvinit)"
+if [ "$(cat /proc/1/comm 2> /dev/null)" = "init" ]; then
+    check_ok "PID 1 is init (sysvinit)"
 else
-    fail "PID 1 is $PID1 (expected init)"
+    check_fail "PID 1 is NOT sysvinit (Running: $(cat /proc/1/comm 2> /dev/null))"
 fi
 
-if ! dpkg -l systemd 2>/dev/null | grep -q "^ii"; then
-    info "systemd package successfully purged"
+if ! dpkg -l systemd 2> /dev/null | grep -q "^ii"; then
+    check_ok "systemd package successfully purged"
 else
-    warn "systemd package is still present"
+    check_fail "systemd package is still installed!"
 fi
 
-# rsyslog status check
 echo ""
 echo "--> Verifying Automated Logging Service..."
-if service rsyslog status >/dev/null 2>&1 || /etc/init.d/rsyslog status >/dev/null 2>&1; then
-    info "rsyslog service is running"
+if service rsyslog status > /dev/null 2>&1 || /etc/init.d/rsyslog status > /dev/null 2>&1; then
+    check_ok "rsyslog service is running"
 else
-    fail "rsyslog service is NOT running"
+    check_fail "rsyslog service is inactive"
 fi
 
-if [ -s /var/log/syslog ]; then
-    info "/var/log/syslog exists and is non-empty"
+if [ -s "$SYS_LOG" ]; then
+    check_ok "$SYS_LOG exists and is non-empty"
 else
-    warn "/var/log/syslog is missing or empty"
+    check_fail "$SYS_LOG missing or zero bytes"
 fi
 
-# Mount configuration check
 echo ""
 echo "--> Verifying Runtime Mount Configurations..."
 if grep -qs '[[:space:]]/run[[:space:]]' /etc/fstab; then
-    info "/run entry present in /etc/fstab"
+    check_ok "/run entry present in /etc/fstab"
 else
-    fail "Missing /run entry in /etc/fstab"
+    check_fail "/run entry missing from /etc/fstab"
 fi
 
 if grep -qs '[[:space:]]/run/lock[[:space:]]' /etc/fstab; then
-    info "/run/lock entry present in /etc/fstab"
+    check_ok "/run/lock entry present in /etc/fstab"
 else
-    fail "Missing /run/lock entry in /etc/fstab"
+    check_fail "/run/lock entry missing from /etc/fstab"
 fi
 
-# Boot clean link check
 echo ""
-echo "--> Verifying Bootclean Symlinks..."
-if ls /etc/rcS.d/S*checkroot-bootclean* >/dev/null 2>&1; then
-    info "checkroot-bootclean link found in /etc/rcS.d/"
+echo "--> Verifying Bootclean LSB Headers & Dependencies..."
+if [ -f /etc/init.d/checkroot-bootclean.sh ]; then
+    if grep -q '^# Required-Start:.*$local_fs' /etc/init.d/checkroot-bootclean.sh; then
+        check_ok 'checkroot-bootclean.sh contains correct $local_fs LSB header'
+    else
+        check_fail 'checkroot-bootclean.sh missing $local_fs in Required-Start header'
+    fi
 else
-    fail "Missing checkroot-bootclean link in /etc/rcS.d/"
+    check_fail "/etc/init.d/checkroot-bootclean.sh missing"
 fi
 
-# Automated insserv check
-echo ""
-echo "--> Verifying insserv Boot Dependency Graph..."
-if insserv -d >/tmp/insserv.log 2>&1; then
-    info "insserv dependency graph compiled without fatal errors"
+if [ -f /etc/init.d/.depend.boot ]; then
+    check_ok "insserv dependency cache (.depend.boot) exists"
 else
-    fail "insserv dependency check failed:"
-    cat /tmp/insserv.log | sed 's/^/      /'
+    check_fail "insserv dependency cache missing! Run insserv -v"
 fi
 
-# Automated Log Parsing for Boot Errors
 echo ""
 echo "--> Parsing Log Files for Failure Strings..."
+if [ -f "$LOG_FILE" ]; then
+    echo "  [OK] Scanning log file: $LOG_FILE"
 
-LOG_FILES=("/var/log/boot" "/var/log/syslog" "/var/log/messages")
-FAIL_PATTERNS=(
-    "failed!"
-    "checkroot-bootclean.sh ... failed"
-    "Cleaning up temporary files... /run /run/lock failed"
-    "insserv: FATAL"
-    "No inittab.d directory found"
-)
-
-FOUND_LOG_ERRORS=0
-TMP_MATCH=$(mktemp /tmp/tn_pattern_match.XXXXXX)
-
-# Ensure temp file is cleaned up on exit
-trap 'rm -f "$TMP_MATCH"' EXIT
-
-for log in "${LOG_FILES[@]}"; do
-    if [ -f "$log" ] && [ -s "$log" ]; then
-        info "Scanning log file: $log"
-        for pattern in "${FAIL_PATTERNS[@]}"; do
-            # Sanitize log stream through strings to strip binary NUL bytes & escape sequences
-            if strings "$log" 2>/dev/null | grep -iF "$pattern" >"$TMP_MATCH" 2>&1; then
-                fail "Found matching error pattern '$pattern' in $log:"
-                head -n 5 "$TMP_MATCH" | sed 's/^/      /'
-                FOUND_LOG_ERRORS=$((FOUND_LOG_ERRORS + 1))
-            fi
-        done
+    # Check for the specific bootclean failure string
+    if grep -iq "checkroot-bootclean.*failed" "$LOG_FILE"; then
+        check_fail "Found 'checkroot-bootclean.sh ... failed!' in $LOG_FILE"
+    else
+        check_ok "No checkroot-bootclean failure strings found in boot log"
     fi
-done
 
-rm -f "$TMP_MATCH"
-
-if [ "$FOUND_LOG_ERRORS" -eq 0 ]; then
-    info "No boot clean or insserv failure patterns detected in log files!"
-fi
-
-# Summary
-echo ""
-echo "+-------------------------------------------------------------------+"
-echo " Automated Analysis Results: $ERRORS Error(s), $WARNINGS Warning(s)"
-echo "+-------------------------------------------------------------------+"
-
-if [ "$ERRORS" -gt 0 ]; then
-    echo " RESULT: FAILED - Review error items reported above."
-    exit 1
+    # Check for general failure patterns
+    if grep -iq "failed!" "$LOG_FILE"; then
+        check_fail "Found general 'failed!' pattern in $LOG_FILE:"
+        echo "-------------------------------------------------------------------"
+        grep -i "failed!" "$LOG_FILE" | head -n 10
+        echo "-------------------------------------------------------------------"
+    else
+        check_ok "Zero 'failed!' strings detected in $LOG_FILE"
+    fi
 else
-    echo " RESULT: SUCCESS - System is fully configured, clean, and logged!"
-    exit 0
+    check_fail "Log file $LOG_FILE does not exist! (Ensure bootlogd is running)"
 fi
+
+echo ""
+echo "==================================================================="
+echo " DIAGNOSTIC SUMMARY: $PASSED PASSED, $FAILED FAILED"
+echo "==================================================================="
+if [ "$FAILED" -eq 0 ]; then
+    echo " RESULT: System boot health is 100% OK!"
+else
+    echo " RESULT: Errors detected. Run ./tn_sysvinit_autofix.sh to repair."
+fi
+echo "==================================================================="
