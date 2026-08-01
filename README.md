@@ -1,6 +1,6 @@
 # TN Sysvinit Appliance -- Migration Guide
 
-**Debian systemd → sysvinit Migration Toolkit**
+**Debian systemd ==> sysvinit Migration Toolkit**
 Version 1.0 | 2026-07-31 | MIT License | © 2026 Tangent Networks
 
 ---
