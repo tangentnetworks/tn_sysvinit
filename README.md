@@ -1,4 +1,4 @@
-# TN Sysvinit Appliance — Migration Guide
+# TN Sysvinit Appliance -- Migration Guide
 
 **Debian systemd → sysvinit Migration Toolkit**
 Version 1.0 | 2026-07-31 | MIT License | © 2026 Tangent Networks
@@ -54,7 +54,7 @@ This toolkit migrates **Debian-based systems from systemd to sysvinit** with ful
 - Automatic encryption detection (LUKS, LVM, LUKS+LVM)
 - Safe package removal with dry-run simulation before purge
 - Critical package protection (kernel, cryptsetup, LVM, initramfs)
-- Idempotent stages — every script is safe to re-run
+- Idempotent stages -- every script is safe to re-run
 - Surgical LSB header patching with insserv dependency graph rebuild
 - Automated log scanning for known failure patterns
 - Comprehensive logging to `/var/lib/tn-sysvinit-migrate/`
@@ -115,14 +115,14 @@ Run the scripts in this order:
 
 ---
 
-### Phase 1: Preparation — `tn_sysvinit_prep.sh`
+### Phase 1: Preparation -- `tn_sysvinit_prep.sh`
 
 | Attribute    | Details                                                       |
 |--------------|---------------------------------------------------------------|
 | Runs on      | systemd (before reboot)                                       |
 | Purpose      | Detects encryption, installs sysvinit, rebuilds initramfs     |
 | Duration     | 2–5 minutes                                                   |
-| Destructive  | No — safe to re-run                                           |
+| Destructive  | No -- safe to re-run                                           |
 | State file   | `/var/lib/tn-sysvinit-migrate/state.prep`                     |
 | Log file     | `/var/lib/tn-sysvinit-migrate/phase1.log`                     |
 
@@ -159,18 +159,18 @@ The script automatically identifies your storage configuration and saves the res
 sudo ./tn_sysvinit_prep.sh
 ```
 
-At the end of Phase 1 you will see a reboot prompt. Type `yes` to reboot immediately, or `no` to reboot manually later. Do not skip the reboot — Phase 2 requires sysvinit to be PID 1.
+At the end of Phase 1 you will see a reboot prompt. Type `yes` to reboot immediately, or `no` to reboot manually later. Do not skip the reboot -- Phase 2 requires sysvinit to be PID 1.
 
 ---
 
-### Phase 2: Migration — `tn_sysvinit_migrate.sh`
+### Phase 2: Migration -- `tn_sysvinit_migrate.sh`
 
 | Attribute      | Details                                                    |
 |----------------|------------------------------------------------------------|
 | Runs on        | sysvinit (after reboot from Phase 1)                       |
 | Purpose        | Verifies the init switch, then removes systemd             |
 | Duration       | 1–2 minutes                                                |
-| Destructive    | Yes — removes systemd packages                             |
+| Destructive    | Yes -- removes systemd packages                             |
 | State file     | `/var/lib/tn-sysvinit-migrate/state.migration`             |
 | Log file       | `/var/lib/tn-sysvinit-migrate/phase2.log`                  |
 | Simulation log | `/var/lib/tn-sysvinit-migrate/purge-simulation.log`        |
@@ -217,14 +217,14 @@ Do not reboot again after Phase 2 completes. The migration is live; systemd is g
 
 ---
 
-### Phase 3: Autofix — `tn_sysvinit_autofix.sh`
+### Phase 3: Autofix -- `tn_sysvinit_autofix.sh`
 
 | Attribute  | Details                                                     |
 |------------|-------------------------------------------------------------|
 | Runs on    | sysvinit (after Phase 2)                                    |
 | Purpose    | Inspects and repairs common post-migration configuration issues |
 | Duration   | 30–90 seconds                                               |
-| Destructive | No — all changes are additive or corrective; nothing is removed |
+| Destructive | No -- all changes are additive or corrective; nothing is removed |
 | Log file   | `/var/lib/tn-sysvinit-migrate/autofix.log`                  |
 
 #### What It Does
@@ -287,14 +287,14 @@ After it completes, proceed immediately to Phase 4 to confirm the fixes took eff
 
 ---
 
-### Phase 4: Log Check — `tn_sysvinit_check_logs.sh`
+### Phase 4: Log Check -- `tn_sysvinit_check_logs.sh`
 
 | Attribute   | Details                                                  |
 |-------------|----------------------------------------------------------|
 | Runs on     | sysvinit (after Phase 3)                                 |
 | Purpose     | Automated diagnostic verification of system state and log content |
 | Duration    | 5–15 seconds                                             |
-| Destructive | No — read-only except for a temporary file under `/tmp`  |
+| Destructive | No -- read-only except for a temporary file under `/tmp`  |
 | Exit code   | 0 on clean pass, 1 if any errors are found               |
 
 #### What It Does
@@ -361,33 +361,33 @@ A clean exit (code 0) means the system is correctly configured and the log files
 
 ---
 
-### Phase 5: Verification — `tn_sysvinit_verify.sh`
+### Phase 5: Verification -- `tn_sysvinit_verify.sh`
 
 | Attribute  | Details                                                       |
 |------------|---------------------------------------------------------------|
 | Runs on    | sysvinit (anytime after Phase 2)                             |
 | Purpose    | Non-destructive, comprehensive health check of the migration  |
 | Duration   | 5–10 seconds                                                  |
-| Destructive | No — read-only                                               |
+| Destructive | No -- read-only                                               |
 | Log file   | `/var/lib/tn-sysvinit-migrate/verification-report.txt`        |
 
 #### What It Does
 
 Phase 5 performs a broad set of read-only checks across seven categories:
 
-**Init System** — PID 1 is `init`, `/sbin/init` target points to sysvinit, `systemd` package is removed, `sysvinit-core` is installed.
+**Init System** -- PID 1 is `init`, `/sbin/init` target points to sysvinit, `systemd` package is removed, `sysvinit-core` is installed.
 
-**Boot Framework** — Required init.d scripts exist (`checkroot.sh`, `mountkernfs.sh`), runlevel directories exist under `/etc/rc*.d/`, `insserv` is available.
+**Boot Framework** -- Required init.d scripts exist (`checkroot.sh`, `mountkernfs.sh`), runlevel directories exist under `/etc/rc*.d/`, `insserv` is available.
 
-**Kernel and Initramfs** — Running kernel version, initramfs exists for current kernel, initramfs contains essential files (`init`, modules), GRUB can locate the kernel.
+**Kernel and Initramfs** -- Running kernel version, initramfs exists for current kernel, initramfs contains essential files (`init`, modules), GRUB can locate the kernel.
 
-**Encryption** — Loads crypto profile from Phase 1, verifies `/etc/crypttab` entries (if LUKS), checks cryptsetup hook configuration, confirms root is mounted from an encrypted device, checks LVM devices (if LVM).
+**Encryption** -- Loads crypto profile from Phase 1, verifies `/etc/crypttab` entries (if LUKS), checks cryptsetup hook configuration, confirms root is mounted from an encrypted device, checks LVM devices (if LVM).
 
-**Critical Packages** — Essential packages are installed and apt-held where required. Kernel image packages are held. `cryptsetup` packages are held if LUKS was detected. LVM packages are held if LVM was detected.
+**Critical Packages** -- Essential packages are installed and apt-held where required. Kernel image packages are held. `cryptsetup` packages are held if LUKS was detected. LVM packages are held if LVM was detected.
 
-**Filesystem** — Root (`/`) and boot (`/boot`) mounts are valid, `fsck` is available.
+**Filesystem** -- Root (`/`) and boot (`/boot`) mounts are valid, `fsck` is available.
 
-**Log Analysis** — Scans Phase 1 and Phase 2 log files for errors and warnings.
+**Log Analysis** -- Scans Phase 1 and Phase 2 log files for errors and warnings.
 
 #### Running Phase 5
 
@@ -401,7 +401,7 @@ Run this immediately after Phase 2 (or after Phase 4 if you ran autofix and chec
 
 | Result           | Meaning                                  | Action Required                           |
 |------------------|------------------------------------------|-------------------------------------------|
-| SYSTEM HEALTHY   | All checks passed                        | None — migration complete                 |
+| SYSTEM HEALTHY   | All checks passed                        | None -- migration complete                 |
 | Warnings present | Some checks warned                       | Review warnings; system is functional     |
 | FAILED           | One or more critical checks failed       | Review failures; re-run relevant phase    |
 
@@ -582,8 +582,8 @@ Keeping Phase 3 separate from Phase 2 means the destructive purge stage (Phase 2
 - [ ] Run Phase 2: `sudo ./tn_sysvinit_migrate.sh`
 - [ ] Phase 2 completes without errors
 - [ ] Run Phase 3: `sudo ./tn_sysvinit_autofix.sh`
-- [ ] Run Phase 4: `sudo ./tn_sysvinit_check_logs.sh` — confirm exit code 0
-- [ ] Run Phase 5: `sudo ./tn_sysvinit_verify.sh` — confirm SYSTEM HEALTHY
+- [ ] Run Phase 4: `sudo ./tn_sysvinit_check_logs.sh` -- confirm exit code 0
+- [ ] Run Phase 5: `sudo ./tn_sysvinit_verify.sh` -- confirm SYSTEM HEALTHY
 - [ ] Review logs in `/var/lib/tn-sysvinit-migrate/` if any phase reported warnings
 
 ---
