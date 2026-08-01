@@ -10,19 +10,19 @@ readonly FIX_LOG="${LOG_DIR}/autofix.log"
 info() {
     echo "  [OK] $*"
     mkdir -p "$LOG_DIR"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $*" >>"$FIX_LOG" 2>/dev/null || true
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $*" >> "$FIX_LOG" 2> /dev/null || true
 }
 
 warn() {
     echo "  [WARN] $*"
     mkdir -p "$LOG_DIR"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARN: $*" >>"$FIX_LOG" 2>/dev/null || true
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARN: $*" >> "$FIX_LOG" 2> /dev/null || true
 }
 
 action() {
     echo "  [FIXING] $*"
     mkdir -p "$LOG_DIR"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ACTION: $*" >>"$FIX_LOG" 2>/dev/null || true
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ACTION: $*" >> "$FIX_LOG" 2> /dev/null || true
 }
 
 banner() {
@@ -37,14 +37,14 @@ fix_logging() {
     banner "1. LOGGING SUBSYSTEM INSPECTION"
     local needs_install=0
 
-    if ! dpkg -l rsyslog 2>/dev/null | grep -q "^ii"; then
+    if ! dpkg -l rsyslog 2> /dev/null | grep -q "^ii"; then
         warn "rsyslog is not installed."
         needs_install=1
     else
         info "rsyslog package present."
     fi
 
-    if ! dpkg -l bootlogd 2>/dev/null | grep -q "^ii"; then
+    if ! dpkg -l bootlogd 2> /dev/null | grep -q "^ii"; then
         warn "bootlogd is not installed."
         needs_install=1
     else
@@ -74,9 +74,9 @@ fix_logging() {
         fi
     fi
 
-    if ! service rsyslog status >/dev/null 2>&1; then
+    if ! service rsyslog status > /dev/null 2>&1; then
         action "Starting rsyslog service..."
-        update-rc.d rsyslog defaults 2>/dev/null || true
+        update-rc.d rsyslog defaults 2> /dev/null || true
         service rsyslog start || /etc/init.d/rsyslog start
     else
         info "rsyslog service actively running."
@@ -91,21 +91,21 @@ fix_fstab() {
         info "/run entry present in /etc/fstab."
     else
         action "Adding /run tmpfs mount to /etc/fstab..."
-        echo "tmpfs   /run        tmpfs   nodev,nosuid,size=20%,mode=755    0   0" >>"$fstab"
+        echo "tmpfs   /run        tmpfs   nodev,nosuid,size=20%,mode=755    0   0" >> "$fstab"
     fi
 
     if grep -qs '[[:space:]]/run/lock[[:space:]]' "$fstab"; then
         info "/run/lock entry present in /etc/fstab."
     else
         action "Adding /run/lock tmpfs mount to /etc/fstab..."
-        echo "tmpfs   /run/lock   tmpfs   nodev,nosuid,noexec,size=5M       0   0" >>"$fstab"
+        echo "tmpfs   /run/lock   tmpfs   nodev,nosuid,noexec,size=5M       0   0" >> "$fstab"
     fi
 
     if grep -qs '[[:space:]]/tmp[[:space:]]' "$fstab"; then
         info "/tmp entry present in /etc/fstab."
     else
         action "Adding /tmp tmpfs mount to /etc/fstab..."
-        echo "tmpfs   /tmp        tmpfs   nodev,nosuid,mode=1777            0   0" >>"$fstab"
+        echo "tmpfs   /tmp        tmpfs   nodev,nosuid,mode=1777            0   0" >> "$fstab"
     fi
 
     mount -a || true
@@ -124,7 +124,7 @@ fix_configs() {
                 if grep -qs "^${var}=" "$rcs"; then
                     sed -i "s/^${var}=.*/${var}=yes/" "$rcs"
                 else
-                    echo "${var}=yes" >>"$rcs"
+                    echo "${var}=yes" >> "$rcs"
                 fi
             fi
         done
@@ -141,7 +141,31 @@ fix_configs() {
 fix_insserv_bootclean() {
     banner "4. SURGICAL LSB HEADER PATCHING & INSSERV REBUILD"
 
-    # Remove obsolete '-bootclean' references from init headers directly
+    # Step A: Diagnose current LSB headers for checkroot-bootclean.sh
+    local checkroot_script="/etc/init.d/checkroot-bootclean.sh"
+    if [ -f "$checkroot_script" ]; then
+        action "Backing up $checkroot_script..."
+        cp "$checkroot_script" "${checkroot_script}.backup.$(date +%s)"
+
+        action "Fixing LSB headers in $checkroot_script (root cause of boot ordering failures)..."
+        # Remove stale or conflicting LSB directives
+        sed -i '/^# Required-Start:/d' "$checkroot_script"
+        sed -i '/^# Required-Stop:/d' "$checkroot_script"
+        sed -i '/^# Should-Start:/d' "$checkroot_script"
+        sed -i '/^# Should-Stop:/d' "$checkroot_script"
+
+        # Insert proper LSB headers specifying $local_fs dependency
+        sed -i '/^### BEGIN INIT INFO/,/^### END INIT INFO/ {
+            /^# Provides:/i # Required-Start: $local_fs
+            /^# Provides:/i # Required-Stop:
+            /^# Provides:/i # Should-Start:
+            /^# Provides:/i # Should-Stop:
+        }' "$checkroot_script" 2> /dev/null || true
+    else
+        warn "$checkroot_script not found!"
+    fi
+
+    # Step B: Remove obsolete '-bootclean' references from dependent init scripts
     for s in /etc/init.d/mountall.sh /etc/init.d/checkroot.sh /etc/init.d/checkfs.sh; do
         if [ -f "$s" ] && grep -q "\-bootclean" "$s"; then
             action "Removing stale '-bootclean' dependency from LSB header in $s..."
@@ -149,7 +173,7 @@ fix_insserv_bootclean() {
         fi
     done
 
-    # Ensure checkroot-bootclean and mountall-bootclean provide bootclean
+    # Step C: Ensure checkroot-bootclean and mountall-bootclean explicitly provide bootclean
     for s in /etc/init.d/checkroot-bootclean.sh /etc/init.d/mountall-bootclean.sh; do
         if [ -f "$s" ] && ! grep -q "^# Provides:.*bootclean" "$s"; then
             action "Adding 'bootclean' to Provides in $s..."
@@ -157,11 +181,11 @@ fix_insserv_bootclean() {
         fi
     done
 
-    # Clear state dependency files to force fresh insserv calculation
+    # Step D: Clear state dependency files to force fresh insserv calculation
     action "Purging stale insserv cache files..."
-    rm -f /etc/init.d/.depend.boot /etc/init.d/.depend.start /etc/init.d/.depend.stop
+    rm -f /etc/init.d/.depend.*
 
-    # Rebuild dependency graph
+    # Step E: Rebuild dependency graph
     action "Rebuilding insserv dependency graph..."
     if insserv -v; then
         info "insserv dependency graph successfully updated without errors!"
@@ -172,11 +196,13 @@ fix_insserv_bootclean() {
 }
 
 clear_bootlog() {
+    banner "5. BOOT LOG CLEANUP & SERVICE RESTART"
     if [ -f /var/log/boot ]; then
         action "Clearing stale /var/log/boot log buffer..."
-        >/var/log/boot
-        if service bootlogd status >/dev/null 2>&1; then
-            service bootlogd restart || true
+        > /var/log/boot
+        if command -v bootlogd > /dev/null 2>&1; then
+            systemctl restart bootlogd 2> /dev/null || service bootlogd restart 2> /dev/null || true
+            info "Boot log buffer reset and bootlogd restarted."
         fi
     fi
 }
@@ -196,7 +222,10 @@ main() {
     clear_bootlog
 
     banner "AUTOFIX COMPLETE"
-    echo "  Execution complete. Re-run ./tn_sysvinit_check_logs.sh to verify log state."
+    echo "  Execution complete."
+    echo "  Next steps:"
+    echo "    1. reboot"
+    echo "    2. After reboot, run ./tn_sysvinit_check_logs.sh to confirm clean boot state."
     echo ""
 }
 
